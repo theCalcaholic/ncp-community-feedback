@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO feedback_staged_rollouts (date) VALUES ($1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "848c3dfbbecc6cdf818d25c3274215cd08d7f5f63ddd75cb1e339f62f055849f"
+}
