@@ -1,7 +1,10 @@
 {% extends "base.html" %}
 
+{% block title %}NCP community feedback{% endblock %}
 {% block content %}
-<h1>NCP community feedback</h1>
+{% if !err.is_empty() %}
+<div class="message">{{ err }}</div>
+{% endif %}
 <div>Thank you for helping me test staged rollouts for NCP!
     By visiting this page, you are helping me to confirm whether the feature works as intended.
 </div>

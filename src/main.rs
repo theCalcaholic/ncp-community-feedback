@@ -1,39 +1,54 @@
 use std::env;
+use std::fmt::Debug;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use askama::Template;
+use askama::{Template};
 use axum::{extract::State, routing::get, Router};
 use axum::http::StatusCode;
 use sqlx::{Sqlite, SqlitePool};
 use sqlx::migrate::MigrateDatabase;
+use axum_client_ip::{SecureClientIp, SecureClientIpSource};
+use sha256::{digest};
+use tower_http::services::ServeDir;
 
 #[derive(Template)]
 #[template(path = "index.html")]
-struct IndexHtml {}
+struct IndexHtml {
+    err: &'static str
+}
 
 #[derive(Template)]
 #[template(path = "evaluation.html")]
 struct EvaluationTemplate {}
 
-async fn index(State(state): State<Arc<AppState>>) -> Result<IndexHtml, StatusCode> {
+async fn index(State(state): State<Arc<AppState>>, secure_ip: SecureClientIp) -> Result<IndexHtml, StatusCode> {
     let mut db = state.db_pool.acquire().await.unwrap();
     let time = chrono::offset::Utc::now();
-    let success = sqlx::query!(
-        r#"INSERT INTO feedback_staged_rollouts (date) VALUES (?1)"#,
-        time
+    let iphash =
+        digest(format!("{secure_ip:?}"));
+    println!("{} => {iphash:?}", secure_ip.0);
+    match sqlx::query!(
+        r#"INSERT INTO feedback_staged_rollouts (date, ip_hash) VALUES (date(?1), ?2)"#,
+        time, iphash
     )
         .execute(&mut *db)
-        .await.is_ok();
-    if success {
-        Ok(IndexHtml {})
-    } else {
-        Err(StatusCode::INTERNAL_SERVER_ERROR)
+        .await {
+        Ok(_) => Ok(IndexHtml{err: ""}),
+        Err(sqlx::Error::Database(err_box)) => {
+            if err_box.as_ref().is_unique_violation() {
+                Ok(IndexHtml{err: "Your ip has already been counted :)"})
+            } else {
+                Err(StatusCode::INTERNAL_SERVER_ERROR)
+            }
+        },
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR)
     }
 }
 
-async fn evaluation(State(state): State<Arc<AppState>>) -> Result<EvaluationTemplate, StatusCode> {
-
-}
+// async fn evaluation(State(state): State<Arc<AppState>>) -> Result<EvaluationTemplate, StatusCode> {
+//
+// }
 
 async fn setup_db(db_url: &str, migrations_path: PathBuf) -> Result<sqlx::Pool<Sqlite>, sqlx::Error> {
 
@@ -76,8 +91,10 @@ async fn main() -> Result<(), sqlx::Error>{
 
     let app = Router::new()
         .route("/", get(index))
-        .with_state(shared_state);
+        .with_state(shared_state)
+        .layer(SecureClientIpSource::ConnectInfo.into_extension())
+        .nest_service("/static", ServeDir::new(PathBuf::from("static")));
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap();
     Ok(())
 }
